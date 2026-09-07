@@ -279,13 +279,17 @@
     for(let i=0;i<TICK.length;i++){
       const t=TICK[i]; msg(`Fetching ${t} (${i+1}/${TICK.length})…`);
       try{
-        const r = await fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_WEEKLY&symbol=${t}&apikey=${key}`);
-        const j = await r.json();
-        const ts = j["Weekly Time Series"];
+        let j=null, ts=null;
+        for(let attempt=0; attempt<3 && !ts; attempt++){
+          if(attempt) { msg(`Rate limited — waiting to retry ${t}…`); await new Promise(r=>setTimeout(r,15000)); }
+          const r = await fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_WEEKLY&symbol=${t}&apikey=${key}`);
+          j = await r.json(); ts = j["Weekly Time Series"];
+          if(!ts && !/per second|sparingly/i.test(j.Note||j.Information||"")) break;
+        }
         if(!ts){ fail = j.Note||j.Information||j["Error Message"]||`No data for ${t}`; break; }
         got[t] = Object.entries(ts).map(([d,v])=>({d,c:+v["4. close"]})).sort((a,b)=>a.d<b.d?-1:1).slice(-30);
       }catch(e){ fail=`Network error on ${t}. If this page is opened from a file, the browser may block the request; try serving it or opening in a different browser.`; break; }
-      await new Promise(r=>setTimeout(r,250));
+      await new Promise(r=>setTimeout(r,1500));
     }
     btn.disabled=false;
     if(fail){ msg(fail,"err"); if(Object.keys(got).length) Object.assign(state.prices,got); }
