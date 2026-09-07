@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sector rotation tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#EEF1F4; --panel:#FFFFFF; --ink:#16212B; --mute:#6B7A88; --rule:#D5DBE1;
+    --in:#0F7B6C; --out:#B23A2E; --watch:#C99A1C; --spy:#3B4A59;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.45 "IBM Plex Sans",system-ui,sans-serif}
+  h1,h2{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",sans-serif;font-weight:600;margin:0}
+  h1{font-size:26px;line-height:1.1}
+  h2{font-size:17px;margin-bottom:8px}
+  .wrap{max-width:760px;margin:0 auto;padding:18px 16px 60px}
+  .top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+  .stamp{color:var(--mute);font-size:13px}
+  button{font:inherit;font-weight:500;border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:4px;padding:8px 14px;cursor:pointer}
+  button.quiet{background:transparent;color:var(--ink)}
+  button:disabled{opacity:.45;cursor:default}
+  button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--watch);outline-offset:2px}
+  input[type=text],input[type=number],input[type=date],select{font:inherit;padding:7px 9px;border:1px solid var(--rule);border-radius:4px;background:#fff;color:var(--ink)}
+  section{margin-top:26px}
+  .panel{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:14px}
+
+  /* regime strip */
+  .regime{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:6px;overflow:hidden}
+  .regime div{background:var(--panel);padding:12px}
+  .regime b{display:block;font-size:13px;color:var(--mute);font-weight:500;margin-bottom:4px}
+  .regime span{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:600;font-size:18px}
+  .r-in{color:var(--in)} .r-out{color:var(--out)} .r-watch{color:var(--watch)}
+  @media(max-width:520px){.regime{grid-template-columns:1fr}}
+
+  /* ladder */
+  .ladder{display:grid;grid-template-columns:52px 1fr 64px;row-gap:9px;column-gap:10px;align-items:center}
+  .ladder .t{font-weight:600}
+  .ladder .v{text-align:right;font-variant-numeric:tabular-nums;font-size:14px}
+  .bar{position:relative;height:18px}
+  .bar .axis{position:absolute;left:50%;top:-4px;bottom:-4px;border-left:1px dashed var(--rule)}
+  .bar .fill{position:absolute;top:2px;height:14px;border-radius:2px}
+  .bar .dot{position:absolute;top:50%;width:11px;height:11px;border-radius:50%;transform:translate(-50%,-50%);border:2px solid #fff;box-shadow:0 0 0 1px var(--rule)}
+  .key{color:var(--mute);font-size:13px;margin-top:10px}
+  .key i{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:-1px;margin-right:4px}
+
+  /* table */
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{padding:7px 6px;border-bottom:1px solid var(--rule);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  th{font-weight:500;color:var(--mute);text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  td.read{white-space:normal;text-align:left;font-size:13px}
+  .pos{color:var(--in)} .neg{color:var(--out)}
+  .tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+
+  /* flows entry */
+  .entry{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px}
+  .entry label{display:flex;flex-direction:column;font-size:12px;color:var(--mute)}
+  .entry input{width:100%;margin-top:2px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+  .note{color:var(--mute);font-size:13px;margin-top:8px}
+  .warn{background:#FFF8E6;border:1px solid #EAD59A;border-radius:4px;padding:10px 12px;font-size:14px;margin-top:10px}
+  .err{background:#FBEDEB;border:1px solid #E8B4AE;border-radius:4px;padding:10px 12px;font-size:14px;margin-top:10px}
+  details summary{cursor:pointer;font-weight:500}
+  textarea{width:100%;min-height:90px;font:13px/1.4 ui-monospace,monospace;border:1px solid var(--rule);border-radius:4px;padding:8px}
+  @media(prefers-reduced-motion:no-preference){.bar .fill{transition:width .35s ease,left .35s ease}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div>
+      <h1>Sector rotation tracker</h1>
+      <div class="stamp" id="stamp">No data loaded yet.</div>
+    </div>
+    <div class="row" style="margin:0">
+      <button id="btnRefresh">Refresh prices</button>
+      <button class="quiet" id="btnDemo">Load demo data</button>
+    </div>
+  </div>
+
+  <section>
+    <div class="regime" id="regime">
+      <div><b>Breadth</b><span>—</span></div>
+      <div><b>Defensive clustering</b><span>—</span></div>
+      <div><b>Small-cap risk appetite</b><span>—</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>4-week relative strength vs SPY, with 4-week flow</h2>
+    <div class="panel">
+      <div class="ladder" id="ladder"></div>
+      <div class="key">Bars: price return over 4 weeks minus SPY’s. Dots: 4-week net flow as % of AUM —
+        <i style="background:var(--in)"></i>inflow <i style="background:var(--out)"></i>outflow <i style="background:#fff;box-shadow:0 0 0 1px var(--rule)"></i>no flow entered.
+        Dot far right of a red bar = buying weakness.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Detail</h2>
+    <div class="panel tscroll">
+      <table id="tbl">
+        <thead><tr><th>ETF</th><th>1 wk</th><th>4 wk</th><th>13 wk</th><th>vs SPY 4 wk</th><th>4 wk flow $M</th><th>% AUM</th><th>Streak</th><th style="text-align:left">Read</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Enter this week’s flows</h2>
+    <div class="panel">
+      <p class="note" style="margin-top:0">Flows aren’t available from any free API, so this is the one manual step. Each Friday, copy the weekly net flow ($ millions, outflows negative) for each ETF from etf.com or etfdb.com. Prices are fetched automatically.</p>
+      <div class="row" style="margin-top:0"><label>Week ending <input type="date" id="fdate"></label></div>
+      <div class="entry" id="entry" style="margin-top:10px"></div>
+      <div class="row">
+        <button id="btnSaveFlows">Save week</button>
+        <button class="quiet" id="btnClearWeek">Clear fields</button>
+        <span class="note" id="flowCount"></span>
+      </div>
+      <details style="margin-top:14px">
+        <summary>Saved weeks, AUM, backup</summary>
+        <div class="tscroll" style="margin-top:8px"><table id="flowsTbl"><thead></thead><tbody></tbody></table></div>
+        <p class="note">AUM ($M) scales flows so small and large ETFs compare. Update from each fund’s fact sheet.</p>
+        <div class="entry" id="aumEntry"></div>
+        <div class="row"><button class="quiet" id="btnSaveAum">Save AUM</button></div>
+        <p class="note">Backup: copy the text below somewhere safe, or paste a backup in and load it.</p>
+        <textarea id="backup"></textarea>
+        <div class="row"><button class="quiet" id="btnExport">Show backup text</button><button class="quiet" id="btnImport">Load from text</button></div>
+      </details>
+    </div>
+  </section>
+
+  <section>
+    <h2>Price data source</h2>
+    <div class="panel">
+      <p class="note" style="margin-top:0">Weekly closes come from Alpha Vantage. A free key allows 25 requests a day; one refresh uses 14. Get one at alphavantage.co/support/#api-key.</p>
+      <div class="row" style="margin-top:0">
+        <input type="text" id="apikey" placeholder="Alpha Vantage API key" style="flex:1;min-width:200px">
+        <button class="quiet" id="btnSaveKey">Save key</button>
+      </div>
+      <div id="msg"></div>
+    </div>
+  </section>
+
+  <section class="note">
+    Not investment advice. Signals here are descriptive: they show where money and price have been moving, not where they will go.
+  </section>
+</div>
+
+<script>
+(() => {
+  const ETFS = [
+    ["XLK","Technology"],["XLV","Health care"],["XLF","Financials"],["XLE","Energy"],
+    ["XLI","Industrials"],["XLY","Discretionary"],["XLP","Staples"],["XLU","Utilities"],
+    ["XLRE","Real estate"],["XLB","Materials"],["XLC","Comm. services"],
+    ["IWM","Small caps"],["RSP","Equal weight"],["SPY","S&P 500"]];
+  const TICK = ETFS.map(e=>e[0]);
+  const DEFAULT_AUM = {XLK:76000,XLV:40000,XLF:52000,XLE:37000,XLI:22000,XLY:24000,XLP:16000,XLU:19000,XLRE:7500,XLB:6000,XLC:26000,IWM:68000,RSP:75000,SPY:640000};
+
+  // ---------- state & persistence ----------
+  const state = { prices:{}, priceStamp:null, flows:{}, aum:{...DEFAULT_AUM}, key:"" };
+  const hasStore = typeof window.storage?.get === "function";
+  async function load(){
+    if(!hasStore) return;
+    for(const k of ["prices","priceStamp","flows","aum","key"]){
+      try{ const r = await window.storage.get("sft:"+k, false); if(r) state[k]=JSON.parse(r.value);}catch(e){}
+    }
+  }
+  async function save(k){
+    if(!hasStore) return;
+    try{ await window.storage.set("sft:"+k, JSON.stringify(state[k]), false);}catch(e){}
+  }
+
+  // ---------- helpers ----------
+  const $ = s => document.querySelector(s);
+  const pct = v => v==null||isNaN(v) ? "—" : (v*100).toFixed(1)+"%";
+  const cls = v => v>0?"pos":v<0?"neg":"";
+  const fmtM = v => v==null ? "—" : Math.round(v).toLocaleString();
+  const weeksSorted = () => Object.keys(state.flows).sort();
+
+  // returns array of weekly closes ascending for a ticker, or null
+  function series(t){ const s = state.prices[t]; return s && s.length>4 ? s : null; }
+  function ret(t,n){ const s=series(t); if(!s||s.length<=n) return null; return s[s.length-1].c/s[s.length-1-n].c-1; }
+
+  function flowStats(t){
+    const wks = weeksSorted(); const last4 = wks.slice(-4);
+    if(!last4.length) return {f4:null,latest:null,streak:0,pctAum:null};
+    let f4=0, any=false;
+    for(const w of last4){ const v=state.flows[w]?.[t]; if(typeof v==="number"){f4+=v;any=true;} }
+    let streak=0;
+    for(let i=wks.length-1;i>=0;i--){ const v=state.flows[wks[i]]?.[t]; if(typeof v!=="number") break;
+      if(v>0){ if(streak<0) break; streak++; } else if(v<0){ if(streak>0) break; streak--; } else break; }
+    const latest = state.flows[wks[wks.length-1]]?.[t] ?? null;
+    return {f4: any?f4:null, latest, streak, pctAum: any && state.aum[t]>0 ? f4/state.aum[t] : null};
+  }
+
+  function read(f4, r4){
+    if(f4==null) return "Enter flows to read";
+    if(r4==null) return "Need 5 weeks of prices";
+    if(f4>0&&r4<0) return "Buying weakness — early rotation in";
+    if(f4<0&&r4>0) return "Selling strength — distribution";
+    if(f4>0&&r4>0) return "Inflows confirming trend";
+    return "Outflows confirming weakness";
+  }
+
+  // ---------- render ----------
+  function render(){
+    const spy4 = ret("SPY",4);
+    const rows = ETFS.map(([t,name])=>{
+      const r1=ret(t,1), r4=ret(t,4), r13=ret(t,13);
+      const rs = (r4==null||spy4==null)?null:r4-spy4;
+      const fs = flowStats(t);
+      return {t,name,r1,r4,r13,rs,...fs,readTxt:read(fs.f4,r4)};
+    });
+
+    // stamp
+    $("#stamp").textContent = state.priceStamp
+      ? `Prices as of ${state.priceStamp}. ${weeksSorted().length} weeks of flows saved.`
+      : "Add an API key and refresh, or load demo data.";
+
+    // regime
+    const by = t => rows.find(r=>r.t===t);
+    const rsp=by("RSP"), iwm=by("IWM"), xlp=by("XLP"), xlu=by("XLU"), xlv=by("XLV"), xly=by("XLY");
+    const reg = $("#regime").children;
+    const set=(i,txt,c)=>{ reg[i].querySelector("span").textContent=txt; reg[i].querySelector("span").className=c||""; };
+    if(rsp.rs==null) set(0,"—"); else if(rsp.rs>0.003) set(0,"Broadening — equal weight leading","r-in");
+    else if(rsp.rs<-0.003) set(0,"Narrowing — mega-cap led","r-out"); else set(0,"Flat","r-watch");
+    if([xlp,xlu,xlv,xly].some(r=>r.f4==null)) set(1,"Needs flow data");
+    else if(xlp.f4>0&&xlu.f4>0&&xlv.f4>0&&xly.f4<0) set(1,"Yes — de-risking pattern","r-out");
+    else set(1,"No","r-in");
+    if(iwm.rs==null) set(2,"—"); else {
+      const on = iwm.rs>0.005 && (iwm.f4==null||iwm.f4>=0);
+      const off = iwm.rs<-0.005 && (iwm.f4==null||iwm.f4<=0);
+      set(2, on?"Risk-on — small caps leading": off?"Risk-off — small caps lagging":"Mixed", on?"r-in":off?"r-out":"r-watch");
+    }
+
+    // ladder (sorted by RS, SPY excluded)
+    const lad = rows.filter(r=>r.t!=="SPY").sort((a,b)=>(b.rs??-9)-(a.rs??-9));
+    const maxRs = Math.max(0.02, ...lad.map(r=>Math.abs(r.rs??0)));
+    const maxF = Math.max(0.01, ...lad.map(r=>Math.abs(r.pctAum??0)));
+    $("#ladder").innerHTML = lad.map(r=>{
+      const rs=r.rs??0, w=Math.abs(rs)/maxRs*50, left=rs>=0?50:50-w;
+      const dotX = r.pctAum==null?50:50+(r.pctAum/maxF)*48;
+      const dotC = r.pctAum==null?"#fff":r.pctAum>0?"var(--in)":"var(--out)";
+      return `<div class="t">${r.t}</div>
+        <div class="bar"><div class="axis"></div>
+          <div class="fill" style="left:${left}%;width:${w}%;background:${rs>=0?"var(--in)":"var(--out)"};opacity:.45"></div>
+          <div class="dot" style="left:${dotX}%;background:${dotC}" title="4-wk flow ${fmtM(r.f4)} $M"></div>
+        </div>
+        <div class="v ${cls(r.rs)}">${pct(r.rs)}</div>`;
+    }).join("");
+
+    // table
+    $("#tbl tbody").innerHTML = rows.map(r=>`<tr>
+      <td><b>${r.t}</b> <span style="color:var(--mute)">${r.name}</span></td>
+      <td class="${cls(r.r1)}">${pct(r.r1)}</td><td class="${cls(r.r4)}">${pct(r.r4)}</td><td class="${cls(r.r13)}">${pct(r.r13)}</td>
+      <td class="${cls(r.rs)}">${r.t==="SPY"?"—":pct(r.rs)}</td>
+      <td class="${cls(r.f4)}">${fmtM(r.f4)}</td><td class="${cls(r.pctAum)}">${r.pctAum==null?"—":(r.pctAum*100).toFixed(2)+"%"}</td>
+      <td class="${cls(r.streak)}">${r.streak?(r.streak>0?"+":"")+r.streak:"—"}${Math.abs(r.streak)>=3?" ●":""}</td>
+      <td class="read">${r.readTxt}</td></tr>`).join("");
+
+    // flows table
+    const wks = weeksSorted();
+    $("#flowsTbl thead").innerHTML = `<tr><th>Week</th>${TICK.map(t=>`<th>${t}</th>`).join("")}<th></th></tr>`;
+    $("#flowsTbl tbody").innerHTML = wks.map(w=>`<tr><td>${w}</td>${TICK.map(t=>{const v=state.flows[w][t];return `<td class="${cls(v)}">${typeof v==="number"?fmtM(v):"—"}</td>`}).join("")}<td><button class="quiet" data-del="${w}" style="padding:2px 8px">×</button></td></tr>`).join("");
+    $("#flowCount").textContent = wks.length ? `${wks.length} weeks saved` : "";
+    $("#aumEntry").innerHTML = TICK.map(t=>`<label>${t}<input type="number" data-aum="${t}" value="${state.aum[t]??""}"></label>`).join("");
+  }
+
+  // ---------- price fetch ----------
+  async function fetchAll(){
+    const key = state.key.trim();
+    if(!key){ msg("Add an Alpha Vantage key first.","err"); return; }
+    const btn=$("#btnRefresh"); btn.disabled=true;
+    const got={}; let fail=null;
+    for(let i=0;i<TICK.length;i++){
+      const t=TICK[i]; msg(`Fetching ${t} (${i+1}/${TICK.length})…`);
+      try{
+        let j=null, ts=null;
+        for(let attempt=0; attempt<3 && !ts; attempt++){
+          if(attempt) { msg(`Rate limited — waiting to retry ${t}…`); await new Promise(r=>setTimeout(r,15000)); }
+          const r = await fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_WEEKLY&symbol=${t}&apikey=${key}`);
+          j = await r.json(); ts = j["Weekly Time Series"];
+          if(!ts && !/per second|sparingly/i.test(j.Note||j.Information||"")) break;
+        }
+        if(!ts){ fail = j.Note||j.Information||j["Error Message"]||`No data for ${t}`; break; }
+        got[t] = Object.entries(ts).map(([d,v])=>({d,c:+v["4. close"]})).sort((a,b)=>a.d<b.d?-1:1).slice(-30);
+      }catch(e){ fail=`Network error on ${t}. If this page is opened from a file, the browser may block the request; try serving it or opening in a different browser.`; break; }
+      await new Promise(r=>setTimeout(r,1500));
+    }
+    btn.disabled=false;
+    if(fail){ msg(fail,"err"); if(Object.keys(got).length) Object.assign(state.prices,got); }
+    else { state.prices=got; msg(`Loaded ${TICK.length} tickers.`); }
+    const last = got.SPY?.[got.SPY.length-1]?.d; if(last) state.priceStamp=last;
+    await save("prices"); await save("priceStamp"); render();
+  }
+  function msg(text,kind){ $("#msg").innerHTML = text?`<div class="${kind==="err"?"err":"warn"}">${text}</div>`:""; }
+
+  // ---------- demo ----------
+  function demo(){
+    const base={XLK:242,XLV:151,XLF:52.4,XLE:118,XLI:152,XLY:228,XLP:84,XLU:86.5,XLRE:43.2,XLB:97.8,XLC:112,IWM:238,RSP:192,SPY:765};
+    const drift={XLK:.002,XLV:.012,XLF:.003,XLE:.02,XLI:-.015,XLY:-.012,XLP:.005,XLU:.007,XLRE:-.005,XLB:.004,XLC:.002,IWM:-.012,RSP:0,SPY:.002};
+    let seed=7; const rnd=()=>{seed=(seed*9301+49297)%233280;return seed/233280-.5;};
+    const start=new Date("2026-03-06"); state.prices={};
+    for(const t of TICK){ let p=base[t]*0.9; const s=[];
+      for(let i=0;i<27;i++){ p*=1+drift[t]/2+rnd()*.03; const d=new Date(start); d.setDate(d.getDate()+7*i); s.push({d:d.toISOString().slice(0,10),c:+p.toFixed(2)}); }
+      state.prices[t]=s; }
+    state.priceStamp="2026-09-04 (demo)";
+    const wk=["2026-08-07","2026-08-14","2026-08-21","2026-08-28","2026-09-04"];
+    const fl=[[900,-150,200,1200,-400,-600,300,250,-300,100,150,-500,100,3500],[1200,80,150,900,-700,-450,350,300,-250,50,200,-800,150,2800],
+      [400,300,-100,700,-900,-300,400,350,-100,-100,100,-300,250,-1500],[-300,450,250,500,-500,150,200,400,50,150,-50,200,300,4200],[-800,600,300,300,-200,400,150,150,200,200,-100,600,400,-2100]];
+    state.flows={}; wk.forEach((w,i)=>{ state.flows[w]={}; TICK.forEach((t,j)=>state.flows[w][t]=fl[i][j]); });
+    msg("Demo data is illustrative, not real. Refresh prices and enter real flows to replace it.");
+    render();
+  }
+
+  // ---------- wiring ----------
+  function buildEntry(){
+    $("#entry").innerHTML = TICK.map(t=>`<label>${t}<input type="number" step="1" data-t="${t}" placeholder="$M"></label>`).join("");
+    const d=new Date(); d.setDate(d.getDate()-((d.getDay()+2)%7)); $("#fdate").value=d.toISOString().slice(0,10);
+  }
+  $("#btnRefresh").onclick=fetchAll;
+  $("#btnDemo").onclick=demo;
+  $("#btnSaveKey").onclick=async()=>{ state.key=$("#apikey").value; await save("key"); msg(hasStore?"Key saved to this artifact’s storage.":"Key kept for this session only (no persistent storage here)."); };
+  $("#btnSaveFlows").onclick=async()=>{
+    const w=$("#fdate").value; if(!w){ msg("Pick a week-ending date.","err"); return; }
+    const row={}; let any=false;
+    document.querySelectorAll("#entry input").forEach(i=>{ if(i.value!==""){ row[i.dataset.t]=+i.value; any=true; } });
+    if(!any){ msg("Enter at least one flow.","err"); return; }
+    state.flows[w]={...(state.flows[w]||{}),...row}; await save("flows"); msg(`Saved week ending ${w}.`); render();
+  };
+  $("#btnClearWeek").onclick=()=>document.querySelectorAll("#entry input").forEach(i=>i.value="");
+  $("#flowsTbl").addEventListener("click",async e=>{ const w=e.target.dataset?.del; if(!w) return; delete state.flows[w]; await save("flows"); render(); });
+  $("#btnSaveAum").onclick=async()=>{ document.querySelectorAll("[data-aum]").forEach(i=>{ if(i.value!=="") state.aum[i.dataset.aum]=+i.value; }); await save("aum"); render(); };
+  $("#btnExport").onclick=()=>{ $("#backup").value=JSON.stringify({flows:state.flows,aum:state.aum,prices:state.prices,priceStamp:state.priceStamp}); };
+  $("#btnImport").onclick=async()=>{ try{ const j=JSON.parse($("#backup").value); if(j.flows) state.flows=j.flows; if(j.aum) state.aum=j.aum; if(j.prices) state.prices=j.prices; if(j.priceStamp) state.priceStamp=j.priceStamp;
+    for(const k of ["flows","aum","prices","priceStamp"]) await save(k); msg("Backup loaded."); render(); }catch(e){ msg("That text isn’t a valid backup.","err"); } };
+
+  buildEntry();
+  load().then(()=>{ $("#apikey").value=state.key||""; render(); if(!state.priceStamp) msg(hasStore?"":"This page has no persistent storage in this environment, so flows you enter last only for the session. Use the backup text to keep them."); });
+})();
+</script>
+</body>
+</html>
